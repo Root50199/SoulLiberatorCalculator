@@ -18,13 +18,19 @@ you still need.
 
 ## Run the app
 
-On Windows, extract **Soul-Liberator-Calculator-0.1.0-x64.zip** into a writable folder,
-then open **Soul Liberator Calculator.exe** inside it. Keep all the extracted files.
-No installer, Node.js or game client is needed. Saves are kept in
-**soul-liberator.sqlite**, beside the EXE. Keep both together when moving or backing
-up the app. Settings, collapse states, caches, logs and temporary app files stay in
-**.app-data** alongside it. Back up the save file and .app-data folder; preserve both
-when updating. There is no app-data fallback or installer.
+Two Windows downloads are available; both contain the same app.
+
+**Installer** — run **Soul-Liberator-Calculator-0.2.0-x64-setup.exe** and follow the
+wizard. It adds Start menu and desktop shortcuts and an uninstaller. Saves and settings
+go to **%APPDATA%\Soul Liberator Calculator**. Uninstalling or updating keeps them.
+
+**Portable** — extract **Soul-Liberator-Calculator-0.2.0-x64-portable.zip** into a
+writable folder, then open **Soul Liberator Calculator.exe**. Keep all the extracted
+files. Saves stay beside the EXE in **soul-liberator.sqlite**, with settings and caches
+in **.app-data**. Nothing is written elsewhere. Back up and keep both when moving or
+updating the app.
+
+Neither needs Node.js or the game client.
 
 The EXE is unsigned; Windows may show a SmartScreen warning. Only run a copy
 from a source you trust.
@@ -35,8 +41,8 @@ npm ci
 npm run desktop:start
 ```
 
-To build the Windows app folder and ZIP yourself, run `npm run package:win`.
-The result appears in `release`.
+To build the installer and portable ZIP yourself, run `npm run package:win`.
+The results appear in `release`.
 
 ## Getting started
 

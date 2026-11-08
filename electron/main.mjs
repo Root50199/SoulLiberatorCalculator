@@ -1,17 +1,21 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from 'electron'
 import { outsidePanel, resizedBounds, resizeEdges } from './window-resize.mjs'
 import { fileURLToPath } from 'node:url'
 import { inspectClientData } from './client-data.mjs'
 import { PlannerStore, prepareUserDatabase } from './planner-store.mjs'
+import { storageLocation } from './storage-location.mjs'
 import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { mkdirSync } from 'node:fs'
 
 const development = process.env.SOUL_LIBERATOR_DEV === '1'
 const smokeTest = process.argv.includes('--smoke-test')
+const repositoryUrl = 'https://github.com/Root50199/SoulLiberatorCalculator'
 const applicationDirectory = app.isPackaged ? path.dirname(app.getPath('exe')) :
   fileURLToPath(new URL('..', import.meta.url))
-const runtimeDirectory = path.join(applicationDirectory, smokeTest ? '.smoke-data' : '.app-data')
+const { saveDirectory, runtimeDirectory } = storageLocation({ packaged: app.isPackaged,
+  executableDirectory: applicationDirectory, sourceDirectory: applicationDirectory,
+  appDataDirectory: app.getPath('appData'), smokeTest })
 try {
   mkdirSync(runtimeDirectory, { recursive: true })
   for (const name of ['temp', 'crash-dumps', 'logs']) mkdirSync(path.join(runtimeDirectory, name), { recursive: true })
@@ -128,7 +132,10 @@ async function createWindow() {
     })
   }
 
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url === repositoryUrl && !smokeTest) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
   window.webContents.on('will-navigate', (event, url) => {
     if (url !== (development ? `${developmentUrl}/` : indexUrl)) {
       event.preventDefault()
@@ -348,6 +355,17 @@ async function createWindow() {
         if (document.querySelector('.settings-panel').textContent.includes('Ctrl/Alt + optional Shift') ||
           document.querySelector('.settings-panel').textContent.includes('History lasts this app session')) {
           throw new Error('Removed shortcut help text must not appear.');
+        }
+        const repoLink = document.querySelector('.settings-panel a.settings-link');
+        const version = document.querySelector('.app-version'), byline = document.querySelector('.app-byline');
+        if (repoLink?.href !== 'https://github.com/Root50199/SoulLiberatorCalculator' || repoLink.target !== '_blank' ||
+          repoLink.textContent !== repoLink.href ||
+          !/^v\\d+\\.\\d+\\.\\d+/.test(version?.textContent ?? '') || byline?.textContent !== 'By ROOT50199' ||
+          version.getBoundingClientRect().left - document.querySelector('.app-header').getBoundingClientRect().left > 20 ||
+          version.getBoundingClientRect().top - document.querySelector('.app-header').getBoundingClientRect().top > 20 ||
+          byline.getBoundingClientRect().top < document.querySelector('.framed-title').getBoundingClientRect().bottom - 2 ||
+          Number(getComputedStyle(byline).opacity) >= 1) {
+          throw new Error('Version, byline and repository link must be present and positioned.');
         }
         const toggleTimes = [];
         for (const shown of [false, true, false, true]) {
@@ -1290,7 +1308,7 @@ app.whenReady().then(async () => {
     store.db.exec('DELETE FROM planner_workspace')
     store.db.exec('DELETE FROM planner_preferences')
   } else {
-    const filename = app.isPackaged ? await prepareUserDatabase(applicationDirectory) : undefined
+    const filename = saveDirectory ? await prepareUserDatabase(saveDirectory) : undefined
     store = new PlannerStore(filename, development)
   }
   function handle(channel, action) {

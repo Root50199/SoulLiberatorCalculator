@@ -18,6 +18,7 @@ import { applyHeldObols } from './held-obols'
 import { GateDrag, WindowResize } from './WindowResize'
 
 const format = (n: number) => n.toLocaleString('en-US')
+const repositoryUrl = 'https://github.com/Root50199/SoulLiberatorCalculator'
 const message = (error: unknown) => error instanceof Error ? error.message : String(error)
 function isTextField(target: EventTarget): target is HTMLInputElement | HTMLTextAreaElement {
   return target instanceof HTMLTextAreaElement ||
@@ -612,7 +613,9 @@ export function App() {
     <WindowResize onError={setError} />
     {active?.itemId && <EquipmentArt key={active.itemId} id={active.itemId} splash />}
     <header className="app-header">
+      <span className="app-version" aria-label="Version">v{__APP_VERSION__}</span>
       <h1 className="window-title"><span className="framed-title">Soul Liberator Calculator</span></h1>
+      <p className="app-byline">By ROOT50199</p>
       <div className="header-status">
         <span role="status">{busy ? 'Saving...' : ''}</span>
       </div>
@@ -638,6 +641,7 @@ export function App() {
           <label>Redo shortcut<input aria-label="Redo shortcut" value={redoKey} disabled={busy}
             onChange={e => setRedoKey(e.target.value)} onBlur={saveHotkeys}
             onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} /></label>
+          <a className="settings-link" href={repositoryUrl} target="_blank" rel="noreferrer">{repositoryUrl}</a>
           <button onClick={() => setSettingsOpen(false)}>Close settings</button>
         </section>}
       </div>

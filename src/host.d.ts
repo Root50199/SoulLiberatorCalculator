@@ -1,6 +1,8 @@
 import type { Catalog, HistoryStatus, ManualSourceInput, WorkspaceState } from './model'
 
 declare global {
+const __APP_VERSION__: string
+
 interface ClientDataStatus {
   root: string
   available: boolean

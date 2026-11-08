@@ -1,7 +1,7 @@
 {
   "name": "soul-liberator-calculator",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Soul Liberator crafting calculator and tracker for Mabinogi",
   "license": "MIT",
   "author": "Soul Liberator Calculator contributors",
@@ -17,11 +17,11 @@
     "test": "node --test electron/client-data.test.mjs",
     "data:build": "python scripts\\build_material_database.py",
     "test:data": "python -m unittest discover -s scripts -p test_material_database.py",
-    "test:planner": "node --experimental-strip-types --test tests\\planner.test.ts tests\\held-obols.test.ts tests\\source-display.test.ts tests\\equipment-art.test.ts electron\\planner-store.test.mjs electron\\item-icons.test.mjs",
+    "test:planner": "node --experimental-strip-types --test tests\\planner.test.ts tests\\held-obols.test.ts tests\\source-display.test.ts tests\\equipment-art.test.ts electron\\planner-store.test.mjs electron\\storage-location.test.mjs electron\\item-icons.test.mjs",
     "desktop:dev": "concurrently -k -n UI,DESKTOP \"npm run dev\" \"wait-on http-get://127.0.0.1:5174 && cross-env SOUL_LIBERATOR_DEV=1 electron .\"",
     "desktop:start": "npm run build && electron .",
     "test:desktop": "npm run build && electron . --smoke-test",
-    "package:win": "npm run build && electron-builder --win zip --x64"
+    "package:win": "npm run build && electron-builder --win zip nsis --x64"
   },
   "dependencies": {
     "react": "^19.3.1",
@@ -49,6 +49,7 @@
       "electron/preload.cjs",
       "electron/window-resize.mjs",
       "electron/planner-store.mjs",
+      "electron/storage-location.mjs",
       "electron/client-data.mjs",
       "data/soul-liberator.sqlite",
       "client-data.config.json",
@@ -59,7 +60,19 @@
     "win": {
       "target": "zip",
       "icon": "build-resources/icon.ico",
-      "artifactName": "Soul-Liberator-Calculator-${version}-${arch}.${ext}"
+      "artifactName": "Soul-Liberator-Calculator-${version}-${arch}-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Soul Liberator Calculator",
+      "deleteAppDataOnUninstall": false,
+      "license": "LICENSE",
+      "artifactName": "Soul-Liberator-Calculator-${version}-${arch}-setup.${ext}"
     }
   }
 }

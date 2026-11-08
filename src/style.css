@@ -112,6 +112,9 @@ section { padding: 22px; background: var(--gate-panel); border: 1px solid var(--
 .app-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 18px; min-height: 68px; margin-bottom: 8px; align-items: start; align-content: start; position: sticky; top: 0; z-index: 4; background: transparent; padding: 4px 0; -webkit-app-region: drag; }
 .app-header .window-title { grid-column: 1 / -1; grid-row: 1; justify-content: center; padding: 0 150px; text-align: center; }
 .app-header .header-status { position: absolute; top: 40px; left: 0; }
+.app-version { position: absolute; top: 0; left: 2px; font-size: .6rem; opacity: .45; pointer-events: none; }
+.app-byline { position: absolute; top: 38px; left: 0; right: 0; margin: 0; text-align: center; font-size: .62rem; letter-spacing: .08em; opacity: .45; pointer-events: none; }
+.settings-link { display: block; margin: 10px 0 2px; color: var(--gate-teal); overflow-wrap: anywhere; font-size: .8rem; -webkit-app-region: no-drag; }
 .app-header button, .app-header input, .settings-panel, .obol-control { -webkit-app-region: no-drag; }
 .window-title { display: flex; align-items: center; }
 .framed-title { position: relative; display: inline-block; padding: 4px 44px; font-size: 1.15rem; isolation: isolate; }
