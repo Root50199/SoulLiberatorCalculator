@@ -1,0 +1,65 @@
+{
+  "name": "soul-liberator-calculator",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Soul Liberator crafting calculator and tracker for Mabinogi",
+  "license": "MIT",
+  "author": "Soul Liberator Calculator contributors",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "engines": {
+    "node": ">=24.18.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5174 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "icons:render": "node scripts\\render-item-icons.mjs",
+    "test": "node --test electron/client-data.test.mjs",
+    "data:build": "python scripts\\build_material_database.py",
+    "test:data": "python -m unittest discover -s scripts -p test_material_database.py",
+    "test:planner": "node --experimental-strip-types --test tests\\planner.test.ts tests\\held-obols.test.ts tests\\source-display.test.ts tests\\equipment-art.test.ts electron\\planner-store.test.mjs electron\\item-icons.test.mjs",
+    "desktop:dev": "concurrently -k -n UI,DESKTOP \"npm run dev\" \"wait-on http-get://127.0.0.1:5174 && cross-env SOUL_LIBERATOR_DEV=1 electron .\"",
+    "desktop:start": "npm run build && electron .",
+    "test:desktop": "npm run build && electron . --smoke-test",
+    "package:win": "npm run build && electron-builder --win zip --x64"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.0.12",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6",
+    "wait-on": "^9.5.1"
+  },
+  "build": {
+    "appId": "org.soulliberator.calculator",
+    "productName": "Soul Liberator Calculator",
+    "directories": { "output": "release" },
+    "files": [
+      "dist/**/*",
+      "electron/main.mjs",
+      "electron/preload.cjs",
+      "electron/window-resize.mjs",
+      "electron/planner-store.mjs",
+      "electron/client-data.mjs",
+      "data/soul-liberator.sqlite",
+      "client-data.config.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
+      "package.json"
+    ],
+    "win": {
+      "target": "zip",
+      "icon": "build-resources/icon.ico",
+      "artifactName": "Soul-Liberator-Calculator-${version}-${arch}.${ext}"
+    }
+  }
+}
