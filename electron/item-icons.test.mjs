@@ -158,3 +158,23 @@ test('partial final pages assemble while baked-color pages bypass mask dyes', ()
   assert.ok(icon.pixels[6] > icon.pixels[4], 'Second grayscale page uses blue dye.')
   assert.ok(icon.pixels[8] > icon.pixels[10], 'Partial third page uses red dye.')
 })
+test('baked single-page equipment keeps source color instead of luminance-binned dyes', () => {
+  const b = Buffer.alloc(128 + 2)
+  b.write('DDS '); b.writeUInt32LE(1, 12); b.writeUInt32LE(1, 16)
+  for (const [at, value] of [[88, 16], [92, 31744], [96, 992], [100, 31], [104, 32768]]) b.writeUInt32LE(value, at)
+  b.writeUInt16LE(32768 | (20 << 10) | (26 << 5) | 28, 128)
+  const raw = decodeInventoryDds(b, 2, 2, 1)
+  assert.deepEqual(decodeInventoryDds(b, 2, 2, 1, renderDyes, [1], true).pixels, raw.pixels)
+  assert.notDeepEqual(decodeInventoryDds(b, 2, 2, 1, renderDyes, [1]).pixels, raw.pixels)
+})
+sourceTest('Soul Liberator Orb keeps its baked glass colors', async () => {
+  const store = new PlannerStore()
+  try {
+    const catalog = store.catalog()
+    const icon = await new ItemIcons(catalog.items.map(item => item.id), catalog.slIds).load(1460003)
+    const { root } = await inspectClientData()
+    const raw = decodeInventoryDds(await readFile(path.join(root, 'gfx', 'image2', 'inven', 'tools',
+      'UU_weapon_muri_orb.dds')), 48, 48, 1)
+    assert.deepEqual(icon.pixels, raw.pixels)
+  } finally { store.close() }
+})

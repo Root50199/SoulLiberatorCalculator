@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { resizedBounds, resizeEdges } from './window-resize.mjs'
+import { outsidePanel, resizedBounds, resizeEdges } from './window-resize.mjs'
 
 const bounds = { x: 100, y: 200, width: 1000, height: 800 }
+test('hidden gate exterior is click-through while panel and resize border remain interactive', () => {
+  assert.equal(outsidePanel(bounds, { x: 101, y: 201 }), true)
+  assert.equal(outsidePanel(bounds, { x: 600, y: 250 }), true)
+  assert.equal(outsidePanel(bounds, { x: 600, y: 500 }), false)
+  assert.equal(outsidePanel(bounds, { x: 198, y: 600 }), false)
+  assert.equal(outsidePanel(bounds, { x: 1005, y: 600 }), true)
+})
 test('all resize edges retain the opposite edge', () => {
   for (const edge of resizeEdges) {
     const result = resizedBounds(bounds, edge, 50, 30)

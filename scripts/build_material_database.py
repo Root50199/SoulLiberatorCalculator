@@ -275,7 +275,7 @@ class ClientCatalog:
             # User excluded unused "(Temporary) Wool 2"; it is not a live material candidate.
             self.candidate_cache[expression] = sorted(
                 item_id for item_id, definitions in self.items.items()
-                if item_id != 90201 and any(d["category"] and fnmatchcase(
+                if item_id not in {90201, 5100175, 5100176, 5100177, 5100178, 5100179} and any(d["category"] and fnmatchcase(
                     d["category"], expression if expression.startswith("*") else
                     f"*{expression}" if "*" in expression else f"*{expression}*")
                        for d in definitions))

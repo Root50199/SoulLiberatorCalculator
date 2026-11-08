@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { calculatePlan } from '../src/planner.ts'
 import type { Catalog, TrackingPlan } from '../src/model.ts'
-import { aliasInventory, materialAliases, materialRequirements, sortInventoryMaterials, baseItemName, digitCaret, groupDigits, materialPriceComparison } from '../src/price-display.ts'
+import { aliasInventory, materialAliases, materialRequirements, sortInventoryMaterials, baseItemName, digitCaret, groupDigits, materialPriceComparison, materialPriceLookup } from '../src/price-display.ts'
 
 const catalog: Catalog = {
   devMode: true, notes: [], memberships: [], slIds: [1],
@@ -30,12 +30,58 @@ const catalog: Catalog = {
   ],
 }
 
+test('screenshot-confirmed copper fragment conversion uses regular fragments; other confirmed batches are enabled', () => {
+  const conversion: Catalog = { ...catalog, slIds: [], items: [
+    { id: 64037, name: 'Copper Ore Fragment', nameStatus: 'resolved', ahPrice: 100, auctionEligible: true },
+    { id: 64036, name: 'Iron Ore Fragment', nameStatus: 'resolved', ahPrice: 1, auctionEligible: true },
+    { id: 64088, name: 'Iron Ore Fragment (Event)', nameStatus: 'resolved', ahPrice: 0, auctionEligible: false },
+  ], recipes: [{ key: 'MetalExtraction/9/118#118', section: 'MetalExtraction', productId: 64037, output: 100,
+    ingredients: [{ position: 1, quantity: 220, candidates: [64036, 64088], matchStatus: 'category_fragment_candidate_unverified' }] }],
+    sources: [{ ...catalog.sources[0], itemId: 64037, key: 'craft:MetalExtraction/9/118#118' }] }
+  const tracking = { id: 'conversion', label: 'Conversion', itemId: 64037, quantity: 101,
+    inventory: { 64088: 1000 }, overrides: { root: 'recipe:MetalExtraction/9/118#118' } }
+  const result = calculatePlan(conversion, tracking, 1)
+  assert.deepEqual(result.unresolved, [])
+  assert.equal(result.gold, 440)
+  assert.equal(result.tree.children[0].required, 440)
+  assert.deepEqual(result.tree.children[0].candidateIds, [64036])
+  const altered = { ...conversion, recipes: [{ ...conversion.recipes[0], output: 99 }] }
+  assert.deepEqual(calculatePlan(altered, tracking, 1).unresolved, [])
+})
+test('confirmed Metal Conversion recipes retain recycling-cycle guards', () => {
+  const cyclic = { ...catalog, recipes: catalog.recipes.map(recipe => ({ ...recipe,
+    section: 'MetalExtraction', ingredients: recipe.ingredients.map(ingredient => ({
+      ...ingredient, candidates: recipe.key === 'child' ? [1] : ingredient.candidates,
+      matchStatus: 'category_fragment_candidate_unverified',
+    })) })) }
+  const result = calculatePlan(cyclic, { id: 'cycle', label: 'Cycle', itemId: 1,
+    quantity: 1, inventory: {}, overrides: {
+      root: 'recipe:root', 'root/root:1': 'recipe:child', 'root/root:1/child:1': 'recipe:root',
+    } }, 1)
+  assert.ok(result.unresolved.some(reason => reason.includes('Recycling cycle excluded')))
+})
+
 test('NPC comparison retains gold and ducat prices per unit without converting ducats', () => {
   const offers = ['gold', 'ducats'].map(currency => ({ ...catalog.sources[2],
     key: currency, itemId: 3, currency, currencyItemId: null, price: 100, quantity: 5, origin: 'manual' }))
   const comparison = materialPriceComparison({ ...catalog, sources: offers }, [3], 600000)
   assert.deepEqual(comparison.npcPrices.map(offer => [offer.currency, offer.price]), [['gold', 20], ['ducats', 20]])
   assert.equal(comparison.obolGold, null)
+})
+test('material price lookup reuses previews and refreshes when catalog or Obol value changes', () => {
+  const lookup = materialPriceLookup(catalog, 100)
+  const first = lookup([2])
+  assert.deepEqual(first, materialPriceComparison(catalog, [2], 100))
+  assert.strictEqual(lookup([2]), first)
+  assert.deepEqual(lookup([3, 4]), materialPriceComparison(catalog, [3, 4], 100))
+  assert.notStrictEqual(lookup([4, 3]), lookup([3, 4]))
+  const changed = { ...catalog, items: catalog.items.map(item => item.id === 3 ? { ...item, ahPrice: 1 } : item),
+    sources: catalog.sources.filter(source => source.kind !== 'shop') }
+  assert.equal(materialPriceLookup(changed, 100)([2]).craftGold, 3)
+  assert.equal(materialPriceLookup(catalog, 200)([4]).obolGold, 200)
+  const invalid = materialPriceLookup({ ...catalog, items: [] }, 100)
+  assert.throws(() => invalid([2]), /Missing material definition/)
+  assert.throws(() => invalid([2]), /Missing material definition/)
 })
 test('tracked SL crafting root ignores root purchases, owned SL and stale root overrides', () => {
   const result = calculatePlan(catalog, { id: 'root-test', itemId: 1, label: 'Test', quantity: 1,
@@ -80,8 +126,12 @@ test('opt-in missing prices select zero-cost Auto routes and propagate price ann
   assert.deepEqual(result.tree.missingPrices, ['Enter AH gold price for Material.'])
   assert.equal(result.tree.children[0].children[0].routeKey, 'ah:3')
   const excluded = { ...unpriced, recipes: unpriced.recipes.map(recipe =>
-    recipe.key === 'child' ? { ...recipe, section: 'MetalExtraction' } : recipe) }
+    recipe.key === 'child' ? { ...recipe, section: 'MetalExtraction', ingredients:
+      recipe.ingredients.map(ingredient => ({ ...ingredient, matchStatus: 'unknown_category' })) } : recipe) }
   assert.ok(calculatePlan(excluded, forced, 600000, true, true).unresolved.length > 0)
+  const conversion = calculatePlan(excluded, forced, 600000, true, true)
+  assert.ok(conversion.unresolved.some(reason => reason.includes('ingredient category matching')))
+  assert.equal(conversion.tree.children[0].route, 'Craft: Metal Conversion')
   assert.equal(unpriced.items.find(item => item.id === 3)?.ahPrice, null)
 })
 test('needed counts use full selected quantities and suppress descendants of owned parents', () => {

@@ -41,6 +41,13 @@ export interface PlanningResult {
 
 const OBOL_ID = 5300217
 
+export function isVerifiedConversion(recipe: Catalog['recipes'][number]) {
+  // In-game screenshot: Rank 1, 220 regular Iron Ore Fragments produce 100 Copper Ore Fragments.
+  return recipe.key === 'MetalExtraction/9/118#118' && recipe.section === 'MetalExtraction' &&
+    recipe.productId === 64037 && recipe.output === 100 && recipe.ingredients.length === 1 &&
+    recipe.ingredients[0].quantity === 220 && recipe.ingredients[0].candidates.includes(64036)
+}
+
 export function calculatePlan(catalog: Catalog, plan: TrackingPlan, obolValue: number, craftRoot = false, assumeMissingPrices = false): PlanningResult {
   if (plan.itemId === null) throw new Error('Select equipment in this tab before calculating.')
   if (!Number.isSafeInteger(obolValue) || obolValue < 0 ||
@@ -145,10 +152,15 @@ export function calculatePlan(catalog: Catalog, plan: TrackingPlan, obolValue: n
           s.key === `craft:${recipe.key}`)
         if (!source) continue
         const reasons: string[] = []
+        const verifiedConversion = recipe.section === 'MetalExtraction' &&
+          recipe.ingredients.every(ingredient =>
+            ['wildcard_category_candidate', 'category_fragment_candidate_unverified'].includes(ingredient.matchStatus))
         if (ancestors.has(id)) reasons.push(`Recycling cycle excluded: ${item.name}.`)
-        if (recipe.section === 'MetalExtraction' ||
-          recipe.ingredients.some(i => i.matchStatus !== 'wildcard_category_candidate')) {
-          reasons.push(`Unverified category/recycling recipe excluded: ${recipe.section}.`)
+        if (!verifiedConversion && (recipe.section === 'MetalExtraction' ||
+          recipe.ingredients.some(i => i.matchStatus !== 'wildcard_category_candidate'))) {
+          reasons.push(recipe.section === 'MetalExtraction'
+            ? 'Metal Conversion excluded: ingredient category matching is not verified; conversion skill availability is not the uncertainty.'
+            : `Unverified category/recycling recipe excluded: ${recipe.section}.`)
         }
         if (recipe.ingredients.length === 0) reasons.push(`Recipe has no verified ingredients: ${item.name}.`)
         let stock = { ...inventory }
@@ -158,7 +170,7 @@ export function calculatePlan(catalog: Catalog, plan: TrackingPlan, obolValue: n
           const batches = Math.ceil(remaining / recipe.output)
           for (const ingredient of recipe.ingredients) {
             if (!ingredient.candidates.length) throw new Error(`No candidates in ${recipe.key}`)
-            const child = evaluate(ingredient.candidates, batches * ingredient.quantity,
+            const child = evaluate(isVerifiedConversion(recipe) ? [64036] : ingredient.candidates, batches * ingredient.quantity,
               `${path}/${recipe.key}:${ingredient.position}`, stock, nextAncestors)
             stock = child.inventory
             children.push(child.node)
@@ -167,7 +179,7 @@ export function calculatePlan(catalog: Catalog, plan: TrackingPlan, obolValue: n
           stock[`planned:${id}`] = (stock[`planned:${id}`] ?? 0) + batches * recipe.output - remaining
         }
         const skill = { MagicCraft: 'Magic Craft', HeulwenEngineering: 'Hillwen Engineering',
-          Spinning: 'Weaving', Refine: 'Refining' }[recipe.section] ?? recipe.section
+          MetalExtraction: 'Metal Conversion', Spinning: 'Weaving', Refine: 'Refining' }[recipe.section] ?? recipe.section
         const variants = (recipes.get(id) ?? []).filter(r => r.section === recipe.section)
         const variant = variants.length > 1 ? ` (recipe ${variants.indexOf(recipe) + 1}, creates ${recipe.output})` : ''
         offer(`recipe:${recipe.key}`, `Craft: ${skill}${variant}`,

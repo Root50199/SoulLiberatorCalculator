@@ -226,7 +226,8 @@ export class ItemIcons {
     let result = decodeInventoryDds(buffer,
       Number(attributes.Inv_XSize) * 24, Number(attributes.Inv_YSize) * 24, pages,
       dyes,
-      Object.keys(attributes).filter(key => /^App_Color[1-9]$/.test(key)).map(key => Number(key.slice(-1))), material && !mappedCrystal)
+      Object.keys(attributes).filter(key => /^App_Color[1-9]$/.test(key)).map(key => Number(key.slice(-1))),
+      (material && !mappedCrystal) || this.dyed.has(id))
     const herb = attributes.Category?.includes('/herb/')
     const gemstonePowder = token.toLowerCase() === 'item_gemstone_powder' || id === 5100273
     if (material && !materialMask && !herb && !gemstonePowder) result = enhanceBakedMaterial(result)

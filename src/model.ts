@@ -57,6 +57,7 @@ export interface TrackingPlan {
   overrides: Record<string, string>
 }
 export interface WorkspaceState {
+  showProtrudingGate?: boolean
   inventory: Record<string, number>
   activeMaterialsOnly: boolean
   obolValue: number

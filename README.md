@@ -46,8 +46,14 @@ The result appears in `release`.
 4. Expand the crafting tree to compare routes and choose overrides.
 5. Update your inventory as you gather materials.
 
+Use the **i** bubble at the top right of a material chip to view its sources and recipe details.
+
 Drag the title or protruding gate to move the window. Drag the panel edges to resize it.
 The gear button contains undo/redo controls and shortcut settings.
+Shortcut edits save when you press Enter or leave the field; invalid shortcuts show an error.
+Settings and display toggles reuse material price previews instead of recalculating every material.
+It also lets you hide the protruding gate decoration while keeping the faded interior artwork.
+With it hidden, the transparent space outside the panel lets clicks reach windows behind it.
 Window size is remembered between sessions. Material counts, prices, tabs and settings
 save automatically; number fields save when you press Enter or leave the field.
 
@@ -57,6 +63,7 @@ save automatically; number fields save when you press Enter or leave the field.
 - Crafting success, failure losses and quality rolls are not modeled.
 - Missing prices count as zero estimates and are marked with `*`; enter prices for useful totals.
 - Reward listings show possible sources, not guaranteed drops.
+- Metal Conversion recipes are included, using player-confirmed recipe quantities.
 - The held-Obol counter shows the all-Obol material requirement. The tree shows spending
   for your selected routes, so buying materials with gold can make those numbers differ.
 

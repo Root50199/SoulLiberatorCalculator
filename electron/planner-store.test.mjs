@@ -46,6 +46,18 @@ test('window size persists across sessions without affecting undo/redo', async t
   assert.throws(() => store.saveWindowSize({ width: 699, height: 800 }), /Window width/)
   assert.throws(() => store.saveWindowSize({ width: 1100, height: 539 }), /Window height/)
 })
+test('protruding gate setting persists and is excluded from data history', async t => {
+  const { store, filename } = await fixture(t)
+  store.setPrice(5100303, 111)
+  store.saveState({ ...store.readState(), showProtrudingGate: false })
+  store.history('undo')
+  assert.equal(store.readState().showProtrudingGate, false)
+  store.history('redo')
+  assert.equal(store.readState().showProtrudingGate, false)
+  const reopened = new PlannerStore(filename)
+  try { assert.equal(reopened.readState().showProtrudingGate, false) } finally { reopened.close() }
+  assert.throws(() => store.saveState({ ...store.readState(), showProtrudingGate: 'yes' }), /gate setting/)
+})
 test('catalog exposes confirmed unit gold/Obol offers, notes, and all SL items', async t => {
   const { store } = await fixture(t)
   const catalog = store.catalog()
@@ -54,7 +66,37 @@ test('catalog exposes confirmed unit gold/Obol offers, notes, and all SL items',
   assert.equal(catalog.sources.find(s => s.key === 'leannan:5100334').quantity, 1)
   assert.equal(catalog.notes.find(n => n.itemId === 63385).status, 'confirmed')
   assert.ok(!catalog.items.some(item => item.id === 90201))
+  const eventIds = [5100175, 5100176, 5100177, 5100178, 5100179]
+  assert.ok(!catalog.items.some(item => eventIds.includes(item.id)))
+  assert.ok(!catalog.memberships.some(member => eventIds.includes(member.itemId)))
+  assert.ok(!catalog.sources.some(source => eventIds.includes(source.itemId)))
+  assert.ok(catalog.recipes.every(recipe => !eventIds.includes(recipe.productId) &&
+    recipe.ingredients.every(ingredient => ingredient.candidates.every(id => !eventIds.includes(id)))))
   assert.ok(catalog.recipes.every(recipe => recipe.ingredients.every(ingredient => !ingredient.candidates.includes(90201))))
+})
+test('all 114 player-confirmed Metal Conversion batches calculate their recorded ingredient quantities', async t => {
+  const { calculatePlan } = await import('../src/planner.ts')
+  const { store } = await fixture(t)
+  const catalog = store.catalog()
+  const conversions = catalog.recipes.filter(recipe => recipe.section === 'MetalExtraction')
+  assert.equal(conversions.length, 114)
+  for (const recipe of conversions) {
+    const inventory = {}
+    for (const ingredient of recipe.ingredients) {
+      for (const id of ingredient.candidates) {
+        if (id !== recipe.productId) inventory[id] = (inventory[id] ?? 0) + ingredient.quantity * 2
+      }
+    }
+    const result = calculatePlan(catalog, { id: 'conversion', label: 'Conversion',
+      itemId: recipe.productId, quantity: recipe.output + 1, inventory,
+      overrides: { root: `recipe:${recipe.key}` } }, 1)
+    assert.deepEqual(result.unresolved, [], recipe.key)
+    assert.equal(result.tree.routeKey, `recipe:${recipe.key}`)
+    assert.equal(result.tree.children.length, recipe.ingredients.length)
+    assert.deepEqual(result.tree.children.map(child => child.required),
+      recipe.ingredients.map(ingredient => ingredient.quantity * 2), recipe.key)
+    assert.equal(result.gold, 0, recipe.key)
+  }
 })
 test('workspace and AH prices persist with shared inventory', async t => {
   const { store, filename } = await fixture(t)

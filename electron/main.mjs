@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen } from 'electron'
-import { resizedBounds, resizeEdges } from './window-resize.mjs'
+import { outsidePanel, resizedBounds, resizeEdges } from './window-resize.mjs'
 import { fileURLToPath } from 'node:url'
 import { inspectClientData } from './client-data.mjs'
 import { PlannerStore, prepareUserDatabase } from './planner-store.mjs'
@@ -31,6 +31,7 @@ const developmentUrl = 'http://127.0.0.1:5174'
 const indexUrl = new URL('../dist/index.html', import.meta.url).href
 let store
 let smokeFolder
+let gestureWindow
 
 function setCustomBounds(window, bounds) {
   // Restore explicit constraints after Windows locks a non-resizable window to its current size.
@@ -73,6 +74,27 @@ async function createWindow() {
       sandbox: true,
     },
   })
+  let ignoringMouse = false
+  function updateClickThrough(point = screen.getCursorScreenPoint()) {
+    const ignore = store.readState().showProtrudingGate === false &&
+      gestureWindow !== window && outsidePanel(window.getBounds(), point)
+    if (ignore !== ignoringMouse) {
+      window.setIgnoreMouseEvents(ignore, { forward: true })
+      ignoringMouse = ignore
+    }
+    return ignoringMouse
+  }
+  const hitTestTimer = setInterval(() => {
+    if (window.isDestroyed()) return
+    try { updateClickThrough() }
+    catch (error) {
+      clearInterval(hitTestTimer)
+      window.setIgnoreMouseEvents(false)
+      console.error('Window click-through failed:', error)
+      dialog.showErrorBox('Window click-through failed', String(error))
+    }
+  }, 50)
+  window.once('closed', () => clearInterval(hitTestTimer))
   if (!smokeTest) window.on('close', event => {
     try {
       store.saveWindowSize(window.getBounds())
@@ -85,8 +107,17 @@ async function createWindow() {
 
   const blockedRequests = []
   if (smokeTest) {
+    const previous = store.readState()
+    store.saveState({ ...previous, showProtrudingGate: false })
+    const bounds = window.getBounds()
+    if (!updateClickThrough({ x: bounds.x + 1, y: bounds.y + 1 }) ||
+      updateClickThrough({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 })) {
+      throw new Error('Hidden gate must pass exterior clicks through but keep panel interactive.')
+    }
+    store.saveState(previous)
     window.webContents.on('console-message', event => {
       if (event.level === 'error') console.error('Renderer smoke error:', event.message)
+      else if (event.message.startsWith('TOGGLE_PERFORMANCE_MS ')) console.log(event.message)
     })
     window.webContents.session.webRequest.onBeforeRequest((details, callback) => {
       const url = new URL(details.url)
@@ -156,6 +187,26 @@ async function createWindow() {
         const field = document.querySelector('[aria-label="Obol price"]');
         if (field.value !== '600,000') throw new Error('Obol price is not grouped.');
         const gear = document.querySelector('[aria-label="Settings"]');
+        gear.click();
+        while (!document.querySelector('[aria-label="Show protruding gate"]')) await new Promise(resolve => setTimeout(resolve, 30));
+        const gateToggle = document.querySelector('[aria-label="Show protruding gate"]');
+        const settingsStyle = getComputedStyle(document.querySelector('.settings-panel'));
+        if (settingsStyle.backgroundColor !== 'rgb(19, 43, 45)' ||
+          getComputedStyle(gateToggle.parentElement).display !== 'flex' ||
+          [...document.querySelectorAll('button')].some(button => button.textContent === 'Save hotkeys')) {
+          throw new Error('Settings must be opaque, align checkbox with label and auto-save hotkeys.');
+        }
+        const gateHistory = (await window.soulLiberator.loadPlanner()).history;
+        gateToggle.click();
+        while (document.querySelector('.gate-window-frame')) await new Promise(resolve => setTimeout(resolve, 30));
+        if (getComputedStyle(document.querySelector('main'), '::before').opacity !== '0.2' ||
+          getComputedStyle(document.querySelector('main'), '::before').clipPath === 'none' ||
+          JSON.stringify((await window.soulLiberator.loadPlanner()).history) !== JSON.stringify(gateHistory)) {
+          throw new Error('Gate setting must hide only protrusions without changing undo history.');
+        }
+        gateToggle.click();
+        while (!document.querySelector('.gate-window-frame')) await new Promise(resolve => setTimeout(resolve, 30));
+        gear.click();
         if (document.body.textContent.includes('Saved to SQLite')) throw new Error('Persistent save notice must remain removed.');
         const box = document.querySelector('.obol-control');
         const coin = box.querySelector('.gold-icon');
@@ -244,7 +295,7 @@ async function createWindow() {
         const waitFor = async (predicate) => {
           const deadline = Date.now() + 10000;
           while (!(await predicate())) {
-            if (Date.now() > deadline) throw new Error('Planner UI smoke timed out: ' + document.body.innerText);
+            if (Date.now() > deadline) throw new Error('Planner UI smoke timed out: ' + predicate.toString());
             await new Promise(resolve => setTimeout(resolve, 30));
           }
         };
@@ -292,6 +343,25 @@ async function createWindow() {
         if (loaded.workspace.plans.length !== 1 || loaded.workspace.obolValue !== 600000) {
           throw new Error('Tracker/default Obol value did not persist.');
         }
+        document.querySelector('[aria-label="Settings"]').click();
+        await waitFor(() => document.querySelector('[aria-label="Show protruding gate"]'));
+        if (document.querySelector('.settings-panel').textContent.includes('Ctrl/Alt + optional Shift') ||
+          document.querySelector('.settings-panel').textContent.includes('History lasts this app session')) {
+          throw new Error('Removed shortcut help text must not appear.');
+        }
+        const toggleTimes = [];
+        for (const shown of [false, true, false, true]) {
+          const start = performance.now();
+          document.querySelector('[aria-label="Show protruding gate"]').click();
+          await waitFor(() => !document.querySelector('[aria-label="Show protruding gate"]').disabled &&
+            Boolean(document.querySelector('.gate-window-frame')) === shown);
+          toggleTimes.push(Math.round(performance.now() - start));
+        }
+        if (Math.max(...toggleTimes) > 500) {
+          throw new Error('Staff settings toggles must finish within 500ms: ' + JSON.stringify(toggleTimes));
+        }
+        console.log('TOGGLE_PERFORMANCE_MS ' + JSON.stringify(toggleTimes));
+        document.querySelector('[aria-label="Settings"]').click();
         if (document.querySelectorAll('.metrics section').length !== 2 || document.querySelector('.metrics p')) {
           throw new Error('Currency/progress summaries must be combined without descriptions.');
         }
@@ -309,6 +379,26 @@ async function createWindow() {
         if ([...document.querySelectorAll('.owned-name')].some(label => label.textContent === 'Soul Liberator Staff')) {
           throw new Error('Finished equipment must not appear in the material list.');
         }
+        if (document.body.textContent.includes('Rewards are source information, not free supplies.')) {
+          throw new Error('Removed rewards explanatory sentence must not appear.');
+        }
+        for (const chip of document.querySelectorAll('.material-chip')) {
+          const info = chip.querySelector('.material-chip-info .info-bubble');
+          const box = chip.getBoundingClientRect();
+          const infoBox = info?.getBoundingClientRect();
+          if (!infoBox || infoBox.right > box.right || box.right - infoBox.right > 10 ||
+            infoBox.top < box.top || infoBox.top - box.top > 10 ||
+            infoBox.left < chip.querySelector('.owned-name').getBoundingClientRect().right) {
+            throw new Error('Each inventory chip must have a non-overlapping upper-right source bubble.');
+          }
+        }
+        const sourceInfo = document.querySelector('.material-chip-info .info-bubble');
+        sourceInfo.click();
+        const sourcePopover = document.getElementById(sourceInfo.getAttribute('aria-controls'));
+        if (!sourcePopover.matches(':popover-open') || !sourcePopover.textContent.trim()) {
+          throw new Error('Inventory source bubble must open source information.');
+        }
+        sourcePopover.hidePopover();
         await waitFor(() => [...document.querySelectorAll('.owned-material .item-icon')].every(icon =>
           icon.querySelector('img')?.complete && icon.querySelector('img')?.naturalWidth > 0));
         for (const icon of document.querySelectorAll('.owned-material .item-icon img')) {
@@ -433,7 +523,8 @@ async function createWindow() {
         setInput('Undo shortcut', 'Alt+Shift+Z');
         setInput('Redo shortcut', 'Ctrl+Shift+Z');
         await new Promise(resolve => setTimeout(resolve, 50));
-        [...document.querySelectorAll('button')].find(b => b.textContent === 'Save hotkeys').click();
+        document.querySelector('[aria-label="Redo shortcut"]').focus();
+        document.querySelector('[aria-label="Redo shortcut"]').blur();
         await waitFor(() => [...document.querySelectorAll('button')].some(b => b.textContent === 'Undo (Alt+Shift+Z)' && !b.disabled));
         await shortcut('z', false, true, true);
         await waitFor(() => document.querySelector('.equipment-card'));
@@ -466,6 +557,10 @@ async function createWindow() {
           [...document.querySelectorAll('button')].find(button => button.textContent === 'Materials').click();
           await waitFor(() => document.querySelector('[aria-label="AH price Bri Leith Core"]')?.value === '765,432');
         }
+        if (${development}) {
+          [...document.querySelectorAll('button')].find(button => button.textContent === 'Owned materials').click();
+          await waitFor(() => document.querySelector('.owned-materials'));
+        }
         [...document.querySelectorAll('button')].find(button => button.textContent === 'Crafting tree').click();
         setInput('Obtained Obols', '1234');
         await new Promise(resolve => setTimeout(resolve, 50));
@@ -492,18 +587,26 @@ async function createWindow() {
           !goldSummary.querySelector('strong').textContent.includes('g / ')) {
           throw new Error('Gold summary must show remaining/total, progress and small spent value.');
         }
+        const filterStart = performance.now();
         document.querySelector('.inventory-filter input').click();
         await waitFor(() => !document.querySelector('.inventory-filter input').checked &&
           !document.querySelector('.inventory-filter input').disabled);
+        const filterOffTime = Math.round(performance.now() - filterStart);
         if (document.querySelector('.needed-quantity') || document.querySelectorAll('.owned-material').length <= aliases.size) {
           throw new Error('Unfiltered global inventory must show all materials without needed suffixes.');
         }
         if ([...document.querySelectorAll('.owned-name')].some(label => label.textContent.includes('임시'))) {
           throw new Error('Unused test wool remains in global material chips.');
         }
+        const filterOnStart = performance.now();
         document.querySelector('.inventory-filter input').click();
         await waitFor(() => document.querySelector('.inventory-filter input').checked &&
           !document.querySelector('.inventory-filter input').disabled);
+        const filterOnTime = Math.round(performance.now() - filterOnStart);
+        if (Math.max(filterOffTime, filterOnTime) > 500) {
+          throw new Error('Inventory toggles must finish within 500ms: ' + JSON.stringify([filterOffTime, filterOnTime]));
+        }
+        console.log('TOGGLE_PERFORMANCE_MS inventory ' + JSON.stringify([filterOffTime, filterOnTime]));
         const expandedHeight = inventoryPanel.getBoundingClientRect().height;
         inventoryPanel.querySelector('summary').click();
         if (inventoryPanel.open || inventoryPanel.getBoundingClientRect().height >= expandedHeight) throw new Error('Inventory collapse failed.');
@@ -561,7 +664,18 @@ async function createWindow() {
           ![...document.querySelectorAll('.inline-price small')].some(label => /\\d+ Obols \\/ item/.test(label.textContent))) {
           throw new Error('Material table must omit duplicate obtained fields and display actual Obol units with compact gold suffix.');
         }
-        if (${development} && document.querySelectorAll('table tbody tr').length < 20) throw new Error('Material list incomplete.');
+        if (${development}) {
+          const table = document.querySelector('.dev-materials');
+          if (!table.closest('.global-inventory') || document.querySelector('.view-tabs').textContent.includes('Materials')) {
+            throw new Error('Development Materials must live inside Inventory, not planner views.');
+          }
+          const filter = document.querySelector('.inventory-filter input');
+          const filteredCount = table.querySelectorAll('tbody tr').length;
+          filter.click();
+          await waitFor(() => !filter.disabled && table.querySelectorAll('tbody tr').length > filteredCount);
+          filter.click();
+          await waitFor(() => !filter.disabled && table.querySelectorAll('tbody tr').length === filteredCount);
+        }
         if (document.querySelector('.sl-tree-root > .tree-node > .node-body > .friendly-sources') ||
           !document.querySelector('.sl-tree-root > .tree-node > .node-body .tree-node .friendly-sources')) {
           throw new Error('Soul Liberator root must omit sources while material sources remain available.');
@@ -636,6 +750,10 @@ async function createWindow() {
             throw new Error('Tab content must have its subtle border.');
           }
         }
+        if (${development}) {
+          [...document.querySelectorAll('button')].find(button => button.textContent === 'Owned materials').click();
+          await waitFor(() => document.querySelector('.owned-materials'));
+        }
         [...document.querySelectorAll('button')].find(button => button.textContent === 'Crafting tree').click();
         await waitFor(() => document.querySelector('.selected-unit-price'));
         if (document.querySelector('.diagnostics') || document.querySelector('footer')) {
@@ -685,13 +803,15 @@ async function createWindow() {
             throw new Error('Every tree item requires an icon immediately left of its name.');
           }
         }
-        if (!treeFrame.borderImageSource.includes('/frame-') ||
+        if (!/\\/frame(?:-|\\.png)/.test(treeFrame.borderImageSource) ||
           treeFrame.borderImageSlice.includes('fill') || treeFrame.borderImageRepeat !== 'stretch' ||
           parseFloat(treeFrame.paddingLeft) !== 22 ||
-          !getComputedStyle(document.querySelector('.global-inventory')).borderImageSource.includes('/frame-') ||
+          !/\\/frame(?:-|\\.png)/.test(getComputedStyle(document.querySelector('.global-inventory')).borderImageSource) ||
           [...document.querySelectorAll('.metrics section')].some(panel =>
-            !getComputedStyle(panel).borderImageSource.includes('/frame-'))) {
-          throw new Error('Supplied inner frames must preserve transparent centers and normal padding.');
+            !/\\/frame(?:-|\\.png)/.test(getComputedStyle(panel).borderImageSource))) {
+          throw new Error('Supplied inner frames must preserve transparent centers and normal padding: ' +
+            JSON.stringify({ source: treeFrame.borderImageSource, padding: treeFrame.paddingLeft,
+              inventory: getComputedStyle(document.querySelector('.global-inventory')).borderImageSource }));
         }
         const outerFrame = getComputedStyle(document.querySelector('main'), '::after');
         if (!outerFrame.borderImageSource.includes('OuterFrame') || outerFrame.pointerEvents !== 'none' ||
@@ -754,7 +874,15 @@ async function createWindow() {
           await new Promise(resolve => setTimeout(resolve, 50));
           ownedField.focus(); ownedField.blur();
           await waitFor(() => !ownedField.disabled && ownedField.value.replace(/,/g, '') === quantity &&
-            priceBranch.querySelector(':scope > summary .tree-quantity').textContent.startsWith(Number(quantity).toLocaleString('en-US') + ' /'));
+            priceBranch.querySelector(':scope > summary .tree-quantity').textContent.startsWith(Number(quantity).toLocaleString('en-US') + ' /'))
+            .catch(error => {
+              throw new Error(error.message + ' ' + JSON.stringify({
+                connected: ownedField.isConnected, disabled: ownedField.disabled, value: ownedField.value,
+                branchConnected: priceBranch.isConnected,
+                branchQuantity: priceBranch.querySelector(':scope > summary .tree-quantity').textContent,
+                errors: [...document.querySelectorAll('[role="alert"]')].map(node => node.textContent),
+              }));
+            });
         };
         await setOwned('18');
         await waitFor(() => priceBranch.classList.contains('completed'));
@@ -842,6 +970,7 @@ async function createWindow() {
         const treeAH = unpricedBranch.querySelector('[aria-label="AH price Bri Leith Core"]');
         if (!treeAH || treeAH.disabled) throw new Error('Tree AH fields must remain editable in production.');
         if (!unpricedBranch.open) unpricedBranch.querySelector(':scope > summary').click();
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
         valueSetter.call(treeAH, '765432');
         treeAH.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1136,6 +1265,7 @@ async function createWindow() {
     result.windowFrame = 'transparent full gate; custom resize IPC and 700x540 /1440x940 controls'
     result.planner = 'grouped price typing/highlighting/backspace, AH persistence, material comparisons, settings hotkeys, offline art, tree/metrics/inventory'
     result.devEditor = development ? 'manual source form persisted to isolated SQLite' : 'production editing gated'
+    clearInterval(hitTestTimer)
     store.close()
     store = null
     await rm(smokeFolder, { recursive: true })
@@ -1203,8 +1333,11 @@ app.whenReady().then(async () => {
     if (command === 'end') {
       if (resizeSession?.window === window) store.saveWindowSize(window.getBounds())
       resizeSession = undefined
+      gestureWindow = undefined
     } else if (command === 'start' && (resizeEdges.includes(edge) || edge === 'move')) {
       resizeSession = { window, edge, bounds: window.getBounds(), cursor: screen.getCursorScreenPoint() }
+      gestureWindow = window
+      window.setIgnoreMouseEvents(false)
     } else if (command === 'update' && resizeSession?.window === window) {
       const cursor = screen.getCursorScreenPoint()
       const bounds = resizedBounds(resizeSession.bounds, resizeSession.edge,

@@ -82,6 +82,7 @@ export function materialPriceComparison(catalog: Catalog, ids: number[], obolVal
   if (obolCosts.some(cost => !Number.isFinite(cost) || cost > Number.MAX_SAFE_INTEGER)) {
     throw new Error('Obol equivalent exceeds the safe calculation range.')
   }
+
   const crafts = ids.flatMap(id => calculatePlan(catalog, {
     id: 'price-preview', itemId: id, label: 'Price preview', quantity: 1, inventory: {}, overrides: {},
   }, obolValue, false, assumeMissingPrices).tree.options.filter(o => o.key.startsWith('recipe:')))
@@ -102,5 +103,18 @@ export function materialPriceComparison(catalog: Catalog, ids: number[], obolVal
       return recipe ? [recipe.output] : []
     }))].sort((a, b) => a - b),
     hasCraft: crafts.length > 0,
+  }
+}
+
+export function materialPriceLookup(catalog: Catalog, obolValue: number, assumeMissingPrices = false) {
+  const prices = new Map<string, ReturnType<typeof materialPriceComparison>>()
+  return (ids: number[]) => {
+    const key = ids.join(',')
+    let price = prices.get(key)
+    if (!price) {
+      price = materialPriceComparison(catalog, ids, obolValue, assumeMissingPrices)
+      prices.set(key, price)
+    }
+    return price
   }
 }

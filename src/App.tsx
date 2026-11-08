@@ -4,7 +4,7 @@ import type { Catalog, HistoryStatus, ManualSourceInput, Source, TrackingPlan, W
 import { calculatePlan } from './planner'
 import type { TreeNode } from './planner'
 import { equipmentArtSource, equipmentArtUrl } from './equipment-art'
-import { aliasInventory, materialAliases, materialRequirements, sortInventoryMaterials, baseItemName, digitCaret, groupDigits, materialPriceComparison } from './price-display'
+import { aliasInventory, materialAliases, materialRequirements, sortInventoryMaterials, baseItemName, digitCaret, groupDigits, materialPriceComparison, materialPriceLookup } from './price-display'
 import goldIcon from './assets/Icon_Currency_Gold.png'
 import settingsIcon from './assets/Settings.png'
 import plusIcon from './assets/GreyScalePlusIcon.png'
@@ -12,7 +12,7 @@ import pencilIcon from './assets/GreyScalePencileIcon.png'
 import deleteIcon from './assets/DeleteIcon.png'
 import changeIcon from './assets/GreyScaleSortIcon.png'
 import downIcon from './assets/DownIcon.png'
-import { craftRecipeLabel, sourceLabels, sourceTooltip } from './source-display'
+import { craftRecipeLabel, sourceLabels, sourceTooltip, inventorySourceTooltip } from './source-display'
 import { goldProgress, obolProgress } from './obol-progress'
 import { applyHeldObols } from './held-obols'
 import { GateDrag, WindowResize } from './WindowResize'
@@ -192,7 +192,7 @@ export function App() {
   const [redoKey, setRedoKey] = useState('Ctrl+Y')
   const [itemSearch, setItemSearch] = useState('')
   const [search, setSearch] = useState('')
-  const [view, setView] = useState('tree')
+  const [inventoryView, setInventoryView] = useState('owned')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [confirmation, setConfirmation] = useState<{ accept: () => void } | null>(null)
   const confirmationDialog = useRef<HTMLDialogElement>(null)
@@ -280,11 +280,24 @@ export function App() {
   async function load() {
     if (!window.soulLiberator) throw new Error('Desktop bridge unavailable. Run npm run desktop:dev.')
     const data = await window.soulLiberator.loadPlanner()
-    setCatalog(data.catalog)
-    setWorkspace(data.workspace)
+    updateCatalog(data.catalog)
+    updateWorkspace(data.workspace)
     setExclusions(data.exclusions)
     setHistory(data.history)
     setUndoKey(data.history.undoKey); setRedoKey(data.history.redoKey)
+  }
+  function updateCatalog(next: Catalog) {
+    setCatalog(previous => previous && JSON.stringify(previous) === JSON.stringify(next) ? previous : next)
+  }
+  function updateWorkspace(next: WorkspaceState) {
+    setWorkspace(previous => previous ? {
+      ...next,
+      inventory: JSON.stringify(previous.inventory) === JSON.stringify(next.inventory) ? previous.inventory : next.inventory,
+      plans: next.plans.map(plan => {
+        const existing = previous.plans.find(candidate => candidate.id === plan.id)
+        return existing && JSON.stringify(existing) === JSON.stringify(plan) ? existing : plan
+      }),
+    } : next)
   }
   useEffect(() => {
     let active = true
@@ -293,7 +306,7 @@ export function App() {
         if (!window.soulLiberator) throw new Error('Desktop bridge unavailable. Run npm run desktop:dev.')
         const data = await window.soulLiberator.loadPlanner()
         if (!active) return
-        setCatalog(data.catalog); setWorkspace(data.workspace); setExclusions(data.exclusions)
+        updateCatalog(data.catalog); updateWorkspace(data.workspace); setExclusions(data.exclusions)
         setHistory(data.history)
         setUndoKey(data.history.undoKey); setRedoKey(data.history.redoKey)
         setPlannerStatus('ready')
@@ -312,7 +325,7 @@ export function App() {
     try {
       await task()
       const data = await window.soulLiberator!.loadPlanner()
-      setCatalog(data.catalog); setWorkspace(data.workspace); setExclusions(data.exclusions)
+      updateCatalog(data.catalog); updateWorkspace(data.workspace); setExclusions(data.exclusions)
       setHistory(data.history)
     }
     catch (failure) {
@@ -328,7 +341,11 @@ export function App() {
     finally { setBusy(false) }
   }
   function save(next: WorkspaceState) {
-    void action(async () => { await window.soulLiberator!.saveWorkspace(next); setWorkspace(next) })
+    void action(async () => { await window.soulLiberator!.saveWorkspace(next) })
+  }
+  function saveHotkeys() {
+    if (undoKey === history.undoKey && redoKey === history.redoKey) return
+    void action(async () => { await window.soulLiberator!.setHotkeys(undoKey, redoKey); await load() })
   }
   function travel(direction: 'undo' | 'redo') {
     if (busy || !(direction === 'undo' ? history.canUndo : history.canRedo)) return
@@ -376,7 +393,7 @@ export function App() {
         obols: obolProgress(catalog, applied.plan), goldProgress: goldProgress(catalog, applied.plan, workspace.obolValue, true), error: '' }
     }
     catch (failure) { return { result: null, error: message(failure) } }
-  }, [catalog, workspace, active])
+  }, [catalog, workspace?.inventory, workspace?.obolValue, active])
   const result = calculation?.result
   function setTreeExpanded(open: boolean) {
     if (!result || !active) return
@@ -397,35 +414,41 @@ export function App() {
     ...(catalog?.memberships.filter(m => m.slId === active?.itemId).map(m => m.itemId) ?? []),
   ])
   if (active?.itemId) relevantIds.delete(active.itemId)
-  const materialGroups = catalog ? materialAliases(catalog, relevantIds) : []
   const needed = materialRequirements(calculation?.inventoryResult)
   const inventoryGroups = sortInventoryMaterials((catalog ? materialAliases(catalog, workspace?.activeMaterialsOnly ? relevantIds :
     new Set(catalog.items.filter(item => !catalog.slIds.includes(item.id) && item.id !== 5300217).map(item => item.id))) : [])
     .filter(group => !workspace?.activeMaterialsOnly || group.ids.some(id => (needed.get(id) ?? 0) > 0)), result)
-  const visibleItems = materialGroups.filter(group => group.name.toLowerCase().includes(search.toLowerCase()))
+  const visibleItems = inventoryGroups.filter(group => group.name.toLowerCase().includes(search.toLowerCase()))
   const owned = (ids: number[]) => ids.reduce((sum, id) => sum + (workspace?.inventory[id] ?? 0), 0)
   function groupInventory(ids: number[], quantity: number) {
     if (workspace) save({ ...workspace, inventory: aliasInventory(workspace.inventory, ids, quantity) })
   }
+  const lookupPrice = useMemo(() => catalog && workspace
+    ? materialPriceLookup(catalog, workspace.obolValue, true) : null, [catalog, workspace?.obolValue])
   const priceComparisons = useMemo(() => {
     const prices = new Map<string, ReturnType<typeof materialPriceComparison>>()
-    if (!catalog || !workspace || !active?.itemId) return { prices, error: '' }
+    if (!catalog || !lookupPrice) return { prices, error: '' }
     try {
+      const slIds = new Set(catalog.slIds)
       const groups = new Map<string, number[]>()
-      for (const item of catalog.items.filter(i => relevantIds.has(i.id))) {
-        const candidates = catalog.recipes.flatMap(r => r.ingredients)
-          .filter(i => i.candidates.includes(item.id)).flatMap(i => i.candidates)
-        groups.set(String(item.id), [...new Set([item.id, ...candidates])])
+      if (catalog.devMode && inventoryView === 'materials') {
+        for (const { item } of visibleItems) {
+          const candidates = catalog.recipes.flatMap(recipe => recipe.ingredients)
+            .filter(ingredient => ingredient.candidates.includes(item.id)).flatMap(ingredient => ingredient.candidates)
+          groups.set(String(item.id), [...new Set([item.id, ...candidates])])
+        }
       }
       function nodes(node: TreeNode) {
-        groups.set(node.path, node.candidateIds)
+        if (!slIds.has(node.itemId)) groups.set(node.path, node.candidateIds)
         node.children.forEach(nodes)
       }
       if (result) nodes(result.tree)
-      for (const [key, ids] of groups) prices.set(key, materialPriceComparison(catalog, ids, workspace.obolValue, true))
+      for (const [key, ids] of groups) {
+        prices.set(key, lookupPrice(ids))
+      }
       return { prices, error: '' }
     } catch (failure) { return { prices, error: message(failure) } }
-  }, [catalog, workspace?.obolValue, active?.itemId, result])
+  }, [catalog, lookupPrice, inventoryView, visibleItems, result])
   function materialSources(ids: number[], itemId: number, name: string, editable = false) {
     if (!catalog) return null
     const sources = new Map<string, Source[]>()
@@ -585,7 +608,7 @@ export function App() {
         event.target.focus()
       }
     }}>
-    <GateDrag onError={setError} />
+    {workspace?.showProtrudingGate !== false && <GateDrag onError={setError} />}
     <WindowResize onError={setError} />
     {active?.itemId && <EquipmentArt key={active.itemId} id={active.itemId} splash />}
     <header className="app-header">
@@ -602,15 +625,19 @@ export function App() {
         <button className="icon-button settings-button" aria-label="Settings" title="Settings" aria-expanded={settingsOpen}
           onClick={() => setSettingsOpen(!settingsOpen)}><img src={settingsIcon} alt="" /></button>
         {settingsOpen && <section className="settings-panel" aria-label="Settings">
+          {workspace && <label className="settings-toggle"><input type="checkbox" aria-label="Show protruding gate"
+            checked={workspace.showProtrudingGate !== false} disabled={busy}
+            onChange={event => save({ ...workspace, showProtrudingGate: event.target.checked })} />
+            Show protruding gate</label>}
           <h2>Undo/redo hotkeys</h2>
           <button disabled={busy || !history.canUndo} onClick={() => travel('undo')}>Undo ({history.undoKey})</button>
           <button disabled={busy || !history.canRedo} onClick={() => travel('redo')}>Redo ({history.redoKey})</button>
-          <label>Undo shortcut<input aria-label="Undo shortcut" value={undoKey} onChange={e => setUndoKey(e.target.value)} /></label>
-          <label>Redo shortcut<input aria-label="Redo shortcut" value={redoKey} onChange={e => setRedoKey(e.target.value)} /></label>
-          <button disabled={busy} onClick={() => void action(async () => {
-            await window.soulLiberator!.setHotkeys(undoKey, redoKey); await load()
-          })}>Save hotkeys</button>
-          <small>Ctrl/Alt + optional Shift + letter/digit. Text fields keep native undo. History lasts this app session.</small>
+          <label>Undo shortcut<input aria-label="Undo shortcut" value={undoKey} disabled={busy}
+            onChange={e => setUndoKey(e.target.value)} onBlur={saveHotkeys}
+            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} /></label>
+          <label>Redo shortcut<input aria-label="Redo shortcut" value={redoKey} disabled={busy}
+            onChange={e => setRedoKey(e.target.value)} onBlur={saveHotkeys}
+            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} /></label>
           <button onClick={() => setSettingsOpen(false)}>Close settings</button>
         </section>}
       </div>
@@ -645,10 +672,16 @@ export function App() {
         <label className="inventory-filter"><input type="checkbox" checked={workspace.activeMaterialsOnly} disabled={busy}
           onChange={event => save({ ...workspace, activeMaterialsOnly: event.target.checked })} />
           Only display materials for the active tab</label>
-        <div className="owned-materials">
+        {catalog.devMode && <nav aria-label="Inventory views">
+          <button className={inventoryView === 'owned' ? 'active' : ''} onClick={() => setInventoryView('owned')}>Owned materials</button>
+          <button className={inventoryView === 'materials' ? 'active' : ''} onClick={() => { setInventoryView('materials'); setSearch('') }}>Materials</button>
+        </nav>}
+        {inventoryView === 'owned' && <div className="owned-materials">
           {inventoryGroups.map(({ item, ids, name }) => {
             const required = ids.reduce((sum, id) => sum + (needed.get(id) ?? 0), 0)
             return <article className={`owned-material material-chip${required > 0 && owned(ids) >= required ? ' completed' : ''}${item.ahPrice === null ? ' missing-price' : ''}`} key={item.id}>
+            <span className="material-chip-info"><InfoBubble label={`Sources for ${name}`}
+              text={inventorySourceTooltip(catalog, ids)} /></span>
             <div className="material-chip-name"><ItemIcon id={item.id} /><span className="owned-name">{name}</span></div>
             <div className="material-chip-fields">
               <label>Owned<span className="owned-count">
@@ -667,7 +700,24 @@ export function App() {
               </span></label>
             </div>
           </article>})}
-        </div>
+        </div>}
+        {inventoryView === 'materials' && catalog.devMode && <section className="dev-materials">
+          <div className="section-heading"><h2>Materials & sources</h2>
+            <input aria-label="Search materials" placeholder="Search materials" value={search} onChange={e => setSearch(e.target.value)} /></div>
+          <div className="table-scroll"><table><thead><tr><th>Material</th><th>AH gold / item</th><th>NPC / Obol / craft comparison</th><th>Sources / notes</th></tr></thead><tbody>
+            {visibleItems.map(({ item, ids, name }) => <tr key={item.id}><td><ItemIcon id={item.id} />
+              <strong>{name}</strong>{item.nameStatus !== 'resolved' && <small>Conflicting client names</small>}</td>
+              <td>{item.auctionEligible ? <NumberField label={`AH price ${itemName(item.id)}`} value={item.ahPrice} grouped nullable disabled={busy}
+                onCommit={v => void action(async () => { await window.soulLiberator!.setPrice(item.id, v); await load() })} />
+                : <small>Not auction-eligible in inspected definitions</small>}</td>
+              <td><span className="material-prices">{comparison(String(item.id))}</span></td>
+              <td>{materialSources(ids, item.id, name, true)}</td></tr>)}
+          </tbody></table></div>
+          <details {...disclosure('exclusions')}><summary>Excluded sources ({exclusions.length}) / undo removals</summary>
+            {exclusions.map(ex => <p key={ex.key}>{ex.key} / {ex.status} {ex.reason}
+              <button disabled={busy} onClick={() => void action(async () => { await window.soulLiberator!.restoreSource(ex.key); await load() })}>Restore</button></p>)}
+          </details>
+        </section>}
         </div>
         <div className="inventory-resize" role="separator" aria-label="Resize inventory" aria-orientation="horizontal"
           tabIndex={0} onPointerDown={event => {
@@ -759,10 +809,9 @@ export function App() {
             <ul>{result.unresolved.map(s => <li key={s}>{baseItemName(s)}</li>)}</ul></details>}
         </>}
         <nav className="view-tabs" aria-label="Planner views">
-          <button className={view === 'tree' ? 'active' : ''} onClick={() => setView('tree')}>Crafting tree</button>
-          {catalog.devMode && <button className={view === 'inventory' ? 'active' : ''} onClick={() => { setView('inventory'); setSearch('') }}>Materials</button>}
+          <button className="active">Crafting tree</button>
         </nav>
-        {view === 'tree' && <section className="crafting-tree-section">
+        {<section className="crafting-tree-section">
           <div className="section-heading"><h2>Acquisition & crafting tree</h2>
             <div className="tree-actions">
               <label className="auto-obol-toggle"><input type="checkbox" checked={active.autoApplyHeldObols ?? false}
@@ -772,26 +821,13 @@ export function App() {
               <button disabled={!result} onClick={() => setTreeExpanded(true)}>Expand all</button>
               <button disabled={busy} onClick={() => updatePlan({ ...active, overrides: {} })}>Reset all route overrides</button>
             </div></div>
-          <p className="muted">Auto compares AH at every level, gold/Obol shops, and usable crafts. Expand rows for alternatives. Rewards are source information, not free supplies.</p>
+          <p className="muted">Auto compares AH at every level, gold/Obol shops, and usable crafts. Expand rows for alternatives.</p>
           {result && tree(result.tree)}
         </section>}
-        {view === 'inventory' && catalog.devMode && <section>
-          <div className="section-heading"><h2>Materials, obtained items & AH prices</h2>
-            <input aria-label="Search materials" placeholder="Search materials" value={search} onChange={e => setSearch(e.target.value)} /></div>
-          <p className="muted">Global inventory is shared by all tabs. AH price is gold per item; missing prices are estimated at zero and marked *.</p>
-          <p className="muted">Obol equivalent is gold per item at your valuation. Craft preview targets one item with empty inventory;
-            includes required purchase/craft batches and values Obols. Unverified recipes stay unresolved.</p>
-          <div className="table-scroll"><table><thead><tr><th>Material</th><th>AH gold / item</th><th>NPC / Obol / craft comparison</th><th>Sources / notes</th></tr></thead><tbody>
-            {visibleItems.map(({ item, ids, name }) => <tr key={item.id}><td><ItemIcon id={item.id} />
-              <strong>{name}</strong>{item.nameStatus !== 'resolved' && <small>Conflicting client names</small>}</td>
-              <td>{item.auctionEligible ? <NumberField label={`AH price ${itemName(item.id)}`} value={item.ahPrice} grouped nullable disabled={busy}
-                onCommit={v => void action(async () => { await window.soulLiberator!.setPrice(item.id, v); await load() })} />
-                : <small>Not auction-eligible in inspected definitions</small>}</td>
-              <td><span className="material-prices">{comparison(String(item.id))}</span></td>
-              <td>{materialSources(ids, item.id, name, true)}</td></tr>)}
-          </tbody></table></div>
-        </section>}
-        {view === 'inventory' && catalog.devMode && <>
+      </>}
+      </>}
+      </div>
+        {catalog.devMode && <>
           {sourceDraft && <dialog ref={sourceDialog} className="source-popout" aria-label="Edit material source"
             onCancel={event => { event.preventDefault(); if (!busy) setSourceDraft(null) }}>
             <form className="source-form"
@@ -826,14 +862,7 @@ export function App() {
             <button className="primary" disabled={busy} type="submit">Save to database</button>
             <button type="button" disabled={busy} onClick={() => setSourceDraft(null)}>Cancel</button>
           </form></dialog>}
-          <details {...disclosure('exclusions')}><summary>Excluded sources ({exclusions.length}) / undo removals</summary>
-            {exclusions.map(ex => <p key={ex.key}>{ex.key} / {ex.status} {ex.reason}
-              <button disabled={busy} onClick={() => void action(async () => { await window.soulLiberator!.restoreSource(ex.key); await load() })}>Restore</button></p>)}
-          </details>
         </>}
-      </>}
-      </>}
-      </div>
     </>}
     {confirmation && <dialog ref={confirmationDialog} className="confirmation-popout"
       aria-labelledby="confirmation-title" onCancel={event => { event.preventDefault(); setConfirmation(null) }}>

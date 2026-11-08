@@ -8,6 +8,7 @@ import path from 'node:path'
 
 const databasePath = fileURLToPath(new URL('../data/soul-liberator.sqlite', import.meta.url))
 const initialState = { obolValue: 600000, activeId: null, plans: [] }
+const excludedEventIds = new Set([5100175, 5100176, 5100177, 5100178, 5100179])
 
 export async function prepareUserDatabase(directory) {
   await mkdir(directory, { recursive: true })
@@ -60,6 +61,7 @@ function historyData(snapshot) {
     const state = JSON.parse(row.state_json)
     delete state.activeId
     delete state.activeMaterialsOnly
+    delete state.showProtrudingGate
     state.plans = state.plans.map(plan => {
       const data = { ...plan }
       delete data.autoApplyHeldObols
@@ -139,7 +141,7 @@ export class PlannerStore {
       ...item,
       auctionEligible: !/\(Not tradable\)|\(Event\)/i.test(item.name) &&
         definitions.some(d => d.item_id === item.id && (d.auction_search_locales ?? '').split(';').includes('usa')),
-    }))
+    })).filter(item => !excludedEventIds.has(item.id))
     const ingredients = this.db.prepare(`SELECT recipe_key,position,quantity,match_status AS matchStatus
       FROM recipe_ingredients ORDER BY position`).all()
     const candidates = this.db.prepare('SELECT recipe_key,position,item_id FROM ingredient_candidates ORDER BY item_id').all()
@@ -147,9 +149,10 @@ export class PlannerStore {
       section,output_quantity AS output FROM recipes`).all().map(r => ({
       ...r, ingredients: ingredients.filter(i => i.recipe_key === r.key).map(i => ({
         position: i.position, quantity: i.quantity, matchStatus: i.matchStatus,
-        candidates: candidates.filter(c => c.recipe_key === r.key && c.position === i.position).map(c => c.item_id),
+        candidates: candidates.filter(c => c.recipe_key === r.key && c.position === i.position &&
+          !excludedEventIds.has(c.item_id)).map(c => c.item_id),
       })),
-    }))
+    })).filter(recipe => !excludedEventIds.has(recipe.productId))
     const sources = this.db.prepare(`SELECT source_key AS key,item_id AS itemId,kind,source_name AS name,
       currency,currency_item_id AS currencyItemId,price,purchase_quantity AS quantity,origin,evidence,
       availability,details_json AS details FROM effective_sources`).all()
@@ -157,9 +160,11 @@ export class PlannerStore {
     return {
       items, recipes, devMode: this.devMode,
       slIds: this.db.prepare('SELECT item_id FROM sl_items').all().map(r => r.item_id),
-      memberships: this.db.prepare('SELECT sl_item_id AS slId,material_item_id AS itemId FROM sl_materials').all(),
-      sources,
-      notes: this.db.prepare('SELECT item_id AS itemId,title,message,status FROM item_notes WHERE enabled=1').all(),
+      memberships: this.db.prepare('SELECT sl_item_id AS slId,material_item_id AS itemId FROM sl_materials').all()
+        .filter(member => !excludedEventIds.has(member.itemId)),
+      sources: sources.filter(source => !excludedEventIds.has(source.itemId)),
+      notes: this.db.prepare('SELECT item_id AS itemId,title,message,status FROM item_notes WHERE enabled=1').all()
+        .filter(note => !excludedEventIds.has(note.itemId)),
     }
   }
   readState() {
@@ -174,6 +179,9 @@ export class PlannerStore {
     return normalized
   }
   validateState(state) {
+    if (state.showProtrudingGate !== undefined && typeof state.showProtrudingGate !== 'boolean') {
+      throw new Error('Invalid protruding gate setting.')
+    }
     if (!state || typeof state !== 'object') throw new Error('Invalid planner workspace.')
     integer(state.obolValue, 'Gold per Obol')
     if (state.inventory !== undefined) {
@@ -306,6 +314,8 @@ export class PlannerStore {
           if (field === 'workspace') {
             const state = JSON.parse(savedRow.state_json)
             state.activeMaterialsOnly = current.activeMaterialsOnly
+            if (current.showProtrudingGate === undefined) delete state.showProtrudingGate
+            else state.showProtrudingGate = current.showProtrudingGate
             state.plans = state.plans.map(plan => {
               const existing = current.plans.find(tab => tab.id === plan.id)
               if (!existing) return plan

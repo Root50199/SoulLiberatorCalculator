@@ -15,6 +15,16 @@ class MaterialDatabaseTests(unittest.TestCase):
         catalog.items[90201] = [{"category": "/material/leaf/"}]
         self.assertNotIn(90201, catalog.candidates("*/leaf/*"))
 
+    def test_exploration_sourced_event_items_are_not_candidates(self):
+        catalog = ClientCatalog(self.root)
+        catalog.load()
+        event_ids = range(5100175, 5100180)
+        for item_id in event_ids:
+            catalog.items[item_id] = [{"category": "/material/leaf/"}]
+        candidates = catalog.candidates("*/leaf/*")
+        self.assertTrue(set(event_ids).isdisjoint(candidates))
+        self.assertIn(3, candidates)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
