@@ -80,6 +80,7 @@ async function createWindow() {
   })
   let ignoringMouse = false
   function updateClickThrough(point = screen.getCursorScreenPoint()) {
+    if (!store) return ignoringMouse
     const ignore = store.readState().showProtrudingGate === false &&
       gestureWindow !== window && outsidePanel(window.getBounds(), point)
     if (ignore !== ignoringMouse) {
@@ -407,7 +408,10 @@ async function createWindow() {
           if (!infoBox || infoBox.right > box.right || box.right - infoBox.right > 10 ||
             infoBox.top < box.top || infoBox.top - box.top > 10 ||
             infoBox.left < chip.querySelector('.owned-name').getBoundingClientRect().right) {
-            throw new Error('Each inventory chip must have a non-overlapping upper-right source bubble.');
+            throw new Error('Each inventory chip must have a non-overlapping upper-right source bubble: ' +
+              JSON.stringify({ name: chip.querySelector('.owned-name').textContent, chip: [box.left, box.top, box.right],
+                info: infoBox && [infoBox.left, infoBox.top, infoBox.right],
+                nameRight: chip.querySelector('.owned-name').getBoundingClientRect().right, viewport: innerWidth }));
           }
         }
         const sourceInfo = document.querySelector('.material-chip-info .info-bubble');
@@ -1388,7 +1392,8 @@ async function failStartup(error) {
   if (smokeFolder) {
     store?.close()
     store = null
-    await rm(smokeFolder, { recursive: true })
+    try { await rm(smokeFolder, { recursive: true }) }
+    catch (cleanupError) { console.error('Smoke cleanup failed:', cleanupError) }
     smokeFolder = null
   }
   app.exit(1)
