@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          python -m pip install --upgrade pip
+          python -m pip install numpy pillow
+
+      - name: Type-check and build
+        run: npm run build
+
+      - name: Unit tests
+        run: |
+          npm test
+          npm run test:planner
+          python -m unittest discover -s scripts -p "test_*.py"
+
+      - name: Desktop smoke test
+        shell: pwsh
+        run: |
+          # Electron smoke occasionally times out on input focus; allow one retry.
+          npx electron . --smoke-test
+          if ($LASTEXITCODE -ne 0) { npx electron . --smoke-test }
+          exit $LASTEXITCODE
